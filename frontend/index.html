@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Каталог рослин</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+	<header>
+	  <p id="auth-status">🔃 Перевірка статусу...</p>
+	  <button id="auth-btn" style="display:none;">Увійти / Зареєструватись</button>
+	  <button id="logout-btn" style="display:none;">Вийти</button>
+	</header>
+	<hr/>
+   <h1>🌿 Каталог кімнатних і садових рослин</h1>
+  <!--<button id="load-btn">Показати всі рослини</button>
+  <ul id="plant-list"></ul>-->
+
+  <h2>Розпізнати рослину</h2>
+  <input type="file" id="plant-image" accept="image/*" />
+  <button id="identify-btn">Розпізнати</button>
+
+  <h2>Мої результати</h2>
+  <ul id="my-results"></ul>
+  <button id="refresh-btn">🔄 Оновити список</button>
+
+  <!-- Підключення Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const SUPABASE_URL = "https://nxzeztbyitbwnrvovvbw.supabase.co";
+      const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im54emV6dGJ5aXRid25ydm92dmJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA0MzcwOTksImV4cCI6MjA2NjAxMzA5OX0.80zSIxYfOALIpIG7VYMF-wqYh9jMKlqJLwUMzCuQzDc";
+      const PLANT_ID_API_KEY = "m7KhUtIZlXxA3ANJhPLNDs3zR3dmJK5Q1dJdCoAQElk7jMBBeE";
+
+      const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+      document.getElementById("identify-btn").addEventListener("click", startIdentification);
+      document.getElementById("refresh-btn").addEventListener("click", loadMyResults);
+
+      async function startIdentification() {
+        const file = document.getElementById("plant-image").files[0];
+        if (!file) {
+          alert("Оберіть зображення.");
+          return;
+        }
+        await identifyPlant(file);
+      }
+
+      async function identifyPlant(file) {
+        const {
+          data: { user },
+          error: authError
+        } = await sb.auth.getUser();
+
+        if (!user) {
+          alert("Спочатку увійди в акаунт.");
+          return;
+        }
+
+        const base64Image = await toBase64(file);
+
+        const response = await fetch("https://api.plant.id/v2/identify", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Api-Key": PLANT_ID_API_KEY
+          },
+          body: JSON.stringify({
+            images: [base64Image],
+            modifiers: ["crops_fast", "similar_images"],
+            plant_language: "en",
+            plant_details: ["common_names", "url", "wiki_description"]
+          })
+        });
+
+        const data = await response.json();
+        const bestGuess = data?.suggestions?.[0]?.plant_name ?? "Невідомо";
+
+        const { error } = await sb.from("saved_plants").insert({
+          user_id: user.id,
+          plant_name: bestGuess,
+          image_url: ""
+        });
+
+        if (error) {
+          console.error("Помилка збереження:", error);
+          alert("Не вдалося зберегти.");
+        } else {
+          alert(`Рослина визначена: ${bestGuess}`);
+        }
+      }
+
+      async function loadMyResults() {
+        const {
+          data: { user },
+          error: authError
+        } = await sb.auth.getUser();
+
+        if (!user) {
+          alert("Спочатку увійди в акаунт.");
+          return;
+        }
+
+        const { data, error } = await sb
+          .from("saved_plants")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false });
+
+        const list = document.getElementById("my-results");
+        list.innerHTML = "";
+
+        if (error) {
+          list.innerHTML = "<li>Помилка при завантаженні.</li>";
+          console.error(error);
+          return;
+        }
+
+        if (!data.length) {
+          list.innerHTML = "<li>Немає збережених рослин.</li>";
+          return;
+        }
+
+        data.forEach(item => {
+          const li = document.createElement("li");
+          li.textContent = `${item.plant_name} (${new Date(item.created_at).toLocaleString()})`;
+          list.appendChild(li);
+        });
+      }
+
+      function toBase64(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => {
+            const base64 = reader.result.split(',')[1];
+            resolve(base64);
+          };
+          reader.onerror = reject;
+        });
+      }
+    });
+  </script>
+</body>
+</html>
